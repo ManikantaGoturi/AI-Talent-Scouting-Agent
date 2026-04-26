@@ -1,0 +1,11 @@
+{
+  "name": "ai-talent-scout",
+  "version": "1.0.0",
+  "description": "AI Powered Talent Scouting Agent",
+  "scripts": {
+    "start": "n8n start"
+  },
+  "dependencies": {
+    "n8n": "latest"
+  }
+}
