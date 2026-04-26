@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-talent-scout
+    runtime: node
+    buildCommand: npm install
+    startCommand: n8n start
+    envVars:
+      - key: N8N_HOST
+        value: 0.0.0.0
+      - key: N8N_PORT
+        value: 10000
+      - key: N8N_PROTOCOL
+        value: https
+      - key: WEBHOOK_URL
+        value: https://ai-talent-scout.onrender.com
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
