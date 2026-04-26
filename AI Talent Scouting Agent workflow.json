@@ -1,0 +1,954 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "1532233d-4bb9-46bc-b72c-293e61a68244",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -384,
+        -32
+      ],
+      "id": "9e9bb71f-acd2-4b31-bdce-88bb3a42506a",
+      "name": "Webhook",
+      "webhookId": "1532233d-4bb9-46bc-b72c-293e61a68244"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"role_title\": {\n      \"type\": \"string\"\n    },\n    \"required_skills\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"experience_years\": {\n      \"type\": \"number\"\n    },\n    \"location\": {\n      \"type\": \"string\"\n    },\n    \"preferred_work\": {\n      \"type\": \"string\"\n    },\n    \"key_requirements\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  }\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        176
+      ],
+      "id": "629fc3b5-ee79-4df4-9740-e5c0e190d1c8",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        384,
+        -32
+      ],
+      "id": "b11f37d6-42c2-4f6f-82e4-3619cb4686ee",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a job description parser.\n\nRead the following Job Description and extract \nthe key information.\n\nJob Description: {{ $('Webhook').item.json.body.jobDescription }}\n\nIMPORTANT: Return ONLY JSON, no extra text.\n\nExtract these fields:\n- role_title: the job title\n- required_skills: list of technical skills needed\n- experience_years: minimum years of experience as a number\n- location: city or \"Remote\" if not specified\n- preferred_work: \"Remote\" or \"Onsite\" or \"Hybrid\"\n- key_requirements: list of main requirements",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -176,
+        -32
+      ],
+      "id": "7d2bdadd-8cbd-4f41-a794-63bcc24a6d44",
+      "name": "JD Parser LLM Chain"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        608,
+        -240
+      ],
+      "id": "f7153855-82c3-40a9-8c87-521ad8dc500a",
+      "name": "Aggregate(To get every individual data in list formate)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst candidates = [];\n\n// Get the data array\nconst dataArray = items[0].json.data || [];\n\nfor (const d of dataArray) {\n  // Data is inside \"text\" field as string\n  const textContent = d.text || '';\n  \n  if (!textContent) continue;\n  \n  let parsed;\n  \n  try {\n    // Remove ```json and ``` markers\n    const cleaned = textContent\n      .replace(/```json\\n/g, '')\n      .replace(/```/g, '')\n      .trim();\n    \n    // Parse the JSON string\n    parsed = JSON.parse(cleaned);\n    \n  } catch(e) {\n    console.log('Parse error for:', textContent);\n    continue;\n  }\n  \n  if (!parsed || !parsed.candidate_name) continue;\n  \n  const matchScore = Number(parsed.match_score) || 0;\n  const interestScore = Number(parsed.interest_score) || 0;\n  const finalScore = Math.round(\n    (matchScore * 0.6) + (interestScore * 0.4)\n  );\n  \n  candidates.push({\n    rank: 0,\n    candidate_name: parsed.candidate_name || '',\n    candidate_email: parsed.candidate_email || '',\n    match_score: matchScore,\n    interest_score: interestScore,\n    final_score: finalScore,\n    interest_level: parsed.interest_level || 'Low',\n    match_explanation: parsed.match_explanation || '',\n    interest_explanation: parsed.interest_explanation || '',\n    outreach_message: parsed.outreach_message || '',\n    candidate_reply: parsed.candidate_reply || ''\n  });\n}\n\n// Check if empty\nif (candidates.length === 0) {\n  return [{\n    json: {\n      error: \"No candidates found\",\n      raw: JSON.stringify(items[0].json)\n    }\n  }];\n}\n\n// Sort highest to lowest\ncandidates.sort((a, b) => \n  b.final_score - a.final_score\n);\n\n// Add ranks\nfor (let i = 0; i < candidates.length; i++) {\n  candidates[i].rank = i + 1;\n}\n\nreturn candidates.map(c => ({ json: c }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        -336
+      ],
+      "id": "c93b42cb-0224-4b55-ac9c-dcef4ec0e9b9",
+      "name": "Rank and combine."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a recruitment AI agent.\n\nAnalyze this candidate against the job requirements\nand complete all 4 tasks below.\n\nJob Requirements:\n- Role: {{ $('JD Parser LLM Chain').item.json.output.role_title }}\n- Required Skills: {{ $('JD Parser LLM Chain').item.json.output.required_skills }}\n- Experience Needed: {{ $('JD Parser LLM Chain').item.json.output.experience_years }} years\n- Work Type: {{ $('JD Parser LLM Chain').item.json.output.preferred_work }}\n\nCandidate Profile:\n- Name: {{ $json.Name }}\n- Email: {{ $json.Email }}\n- Skills: {{ $json.Skills }}\n- Experience: {{ $json.Experience }} years\n- Work Preference: {{ $json['Preferred Work'] }}\n- Open To Relocate: {{ $json['Open To Relocate'] }}\n\nYour 4 Tasks:\n\nTASK 1 - Match Score:\nScore candidate from 0 to 100 based on:\nSkills match = 40 points max\nExperience match = 25 points max\nLocation match = 20 points max\nWork preference = 15 points max\nGive a 2 line explanation why.\n\nTASK 2 - Outreach Message:\nWrite a warm 3 line personalized message\nto this candidate mentioning their name,\nthe role, and why they could be a good fit.\n\nTASK 3 - Candidate Reply:\nSimulate a realistic reply from the candidate.\nBase the reply on:\n- If Open To Relocate is Yes and work \n  preference matches → enthusiastic reply\n- If Open To Relocate is No and location \n  doesnt match → polite decline\n- Otherwise → curious but cautious reply\n\nTASK 4 - Interest Score:\nRead the simulated reply and score \ninterest from 0 to 100:\n80-100 = Very enthusiastic\n60-79  = Interested but cautious\n40-59  = Neutral\n20-39  = Not very interested\n0-19   = Declined\n\nIMPORTANT: Return ONLY this JSON.\nNo extra text. No explanation outside JSON:\n\n{\n  \"candidate_name\": \"full name here\",\n  \"candidate_email\": \"email here\",\n  \"match_score\": 0,\n  \"match_explanation\": \"2 line reason here\",\n  \"outreach_message\": \"3 line message here\",\n  \"candidate_reply\": \"realistic reply here\",\n  \"interest_score\": 0,\n  \"interest_level\": \"High or Medium or Low\",\n  \"interest_explanation\": \"2 line reason here\"\n}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1008,
+        176
+      ],
+      "id": "4e32de97-5dc4-43a4-9fb9-3e751d36ce3d",
+      "name": "AI Talent Scout"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        176
+      ],
+      "id": "182b853a-971f-418f-817b-6ab7d21abe5f",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "fTJ3ibEHxFWlwZHM",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        720,
+        224
+      ],
+      "id": "1b5c2a4e-bd2b-40e0-90b5-7099702d1067",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "fTJ3ibEHxFWlwZHM",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w",
+          "mode": "list",
+          "cachedResultName": "AI-Powered Talent Scouting",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Candidates_application_details",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w/edit#gid=0"
+        },
+        "options": {
+          "outputFormatting": {
+            "values": {
+              "general": "UNFORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        176,
+        -32
+      ],
+      "id": "b4f8fd83-d86f-4529-932f-5cceeff393e4",
+      "name": "Candidates_application_details",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MAurpxmHKlksCA7E",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w",
+          "mode": "list",
+          "cachedResultName": "AI-Powered Talent Scouting",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 169412741,
+          "mode": "list",
+          "cachedResultName": "Shortlisted",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/195qrFocX1jO6989mqgIKBqHMIgjm775gK6xRJSTBm9w/edit#gid=169412741"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Rank": "={{ $json.rank }}",
+            "Candidate Name": "={{ $json.candidate_name }}",
+            "Email": "={{ $json.candidate_email }}",
+            "Match Score": "={{ $json.match_score }}",
+            "Interest Score": "={{ $json.interest_score }}",
+            "Final Score": "={{ $json.final_score }}",
+            "Interest Level": "={{ $json.interest_level }}",
+            "Match Explanation": "={{ $json.match_explanation }}",
+            "Interest Explanation": "={{ $json.interest_explanation }}",
+            "Outreach Message": "={{ $json.outreach_message }}",
+            "Candidate Reply": "={{ $json.candidate_reply }}"
+          },
+          "matchingColumns": [
+            "Rank"
+          ],
+          "schema": [
+            {
+              "id": "Rank",
+              "displayName": "Rank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Candidate Name",
+              "displayName": "Candidate Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Match Score",
+              "displayName": "Match Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Interest Score",
+              "displayName": "Interest Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Final Score",
+              "displayName": "Final Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Interest Level",
+              "displayName": "Interest Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Match Explanation",
+              "displayName": "Match Explanation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Interest Explanation",
+              "displayName": "Interest Explanation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Outreach Message",
+              "displayName": "Outreach Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Candidate Reply",
+              "displayName": "Candidate Reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1008,
+        -336
+      ],
+      "id": "683d70c1-26e4-4249-9ec0-636a25713705",
+      "name": "Shortlisted",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MAurpxmHKlksCA7E",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "content-type": "application/json",
+            "api-key": "OMpqVWAH.UC80wyXTtPwhDgAUdCTx6",
+            "user-agent": "PostmanRuntime/7.52.0",
+            "accept": "*/*",
+            "postman-token": "72c63bff-5ee3-42bf-b7ed-398551b81a15",
+            "host": "localhost:5678",
+            "accept-encoding": "gzip, deflate, br",
+            "connection": "keep-alive",
+            "content-length": "121"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "jobDescription": "We need a Python developer with 3 years experience in SQL, AWS, and Docker. Remote preferred."
+          },
+          "webhookUrl": "http://localhost:5678/webhook-test/1532233d-4bb9-46bc-b72c-293e61a68244",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "JD Parser LLM Chain": [
+      {
+        "json": {
+          "output": {
+            "role_title": "Python developer",
+            "required_skills": [
+              "Python",
+              "SQL",
+              "AWS",
+              "Docker"
+            ],
+            "experience_years": 3,
+            "location": "Remote",
+            "preferred_work": "Remote",
+            "key_requirements": [
+              "Python development",
+              "3 years experience with SQL, AWS, and Docker",
+              "Remote work preferred"
+            ]
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "AI Talent Scout": [
+      {
+        "json": {
+          "text": "```json\n{\n  \"candidate_name\": \"Arjun Verma\",\n  \"candidate_email\": \"arjun@gmail.com\",\n  \"match_score\": 92,\n  \"match_explanation\": \"Arjun has an excellent skills match for the Python developer role and a direct alignment with remote work. Experience is slightly below requirement, contributing to a high overall score.\",\n  \"outreach_message\": \"Hi Arjun, I'm reaching out about an exciting Python Developer role that I think you'd be a great fit for. Your strong skills in Python, SQL, AWS, and Docker align perfectly with our needs, and we love your remote work preference. Let's chat more about this opportunity!\",\n  \"candidate_reply\": \"Hello! Thank you so much for reaching out about the Python Developer role. I'm definitely very interested to learn more, especially since it's a remote position. Please let me know the next steps!\",\n  \"interest_score\": 95,\n  \"interest_level\": \"Very enthusiastic\",\n  \"interest_explanation\": \"Arjun's reply clearly expresses strong interest in the Python Developer role, specifically highlighting the remote aspect. The immediate request for next steps indicates enthusiasm.\"\n}\n```"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Aggregate(To get every individual data in list formate).": [
+      {
+        "json": {
+          "data": [
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Ravi Kumar\",\n  \"candidate_email\": \"ravi@gmail.com\",\n  \"match_score\": 52,\n  \"match_explanation\": \"The candidate lacks the specific Python, SQL, AWS, and Docker skills required for the role. However, their remote work preference aligns perfectly, and their experience is only slightly below the requirement.\",\n  \"outreach_message\": \"Hi Ravi, I'm reaching out about a Python Developer role we have that matches your remote work preference. Your development background is interesting, and we'd love to discuss if this could be a good fit. Would you be open to a brief chat to explore further?\",\n  \"candidate_reply\": \"Hi there, Thanks for reaching out about the Python Developer role! I'm very interested to hear more. My remote preference is a priority, and I'm keen to explore new opportunities. Please let me know the next steps!\",\n  \"interest_score\": 90,\n  \"interest_level\": \"Very enthusiastic\",\n  \"interest_explanation\": \"The candidate explicitly states they are 'very interested' and 'keen to explore new opportunities'. They also proactively ask for the next steps, indicating strong interest.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Anil Reddy\",\n  \"candidate_email\": \"anil@gmail.com\",\n  \"match_score\": 45,\n  \"match_explanation\": \"Good match on experience (25/25) and core Python/Docker skills (20/40), but SQL/AWS are missing.\\nWork preference for onsite clashes with the remote nature of the role (0/20 & 0/15), significantly impacting the overall fit.\",\n  \"outreach_message\": \"Hi Anil, your Python and Docker expertise, along with your 3 years of experience, align well with our Python Developer role.\\nWe're keen to explore how your skills could contribute to our team.\\nWould you be open to learning more about this exciting remote opportunity?\",\n  \"candidate_reply\": \"Thank you for reaching out! The Python Developer role sounds interesting, and I appreciate you seeing a fit with my skills and experience. However, I noticed it's a remote position. While I'm open to new opportunities, my current preference leans towards onsite roles. Could you tell me a bit more about the team culture and how remote collaboration works within your company, and perhaps what flexibility there might be?\",\n  \"interest_score\": 65,\n  \"interest_level\": \"Medium\",\n  \"interest_explanation\": \"The candidate shows initial interest and acknowledges the skill match but expresses caution due to the remote work type.\\nThey are asking for more information before committing, indicating a medium level of interest.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Sneha Sharma\",\n  \"candidate_email\": \"kiran@gmail.com\",\n  \"match_score\": 43,\n  \"match_explanation\": \"Sneha's profile shows a strong match for remote work preference. However, there's a significant mismatch in required technical skills and the minimum experience needed for the Python Developer role.\",\n  \"outreach_message\": \"Hi Sneha Sharma, we're currently hiring for a Python Developer and noticed your profile. Your strong preference for remote work aligns perfectly with our position, and we're keen to connect with talented individuals in the tech space.\",\n  \"candidate_reply\": \"Hello, thank you for reaching out about the Python Developer role. I appreciate you considering my profile, especially as I'm seeking remote opportunities. However, my primary experience and skills are currently focused on React, MongoDB, and Express, rather than Python. Could you please clarify if there's flexibility on the required tech stack, or if there are other roles where my current skills might be a better fit?\",\n  \"interest_score\": 65,\n  \"interest_level\": \"Interested but cautious\",\n  \"interest_explanation\": \"Sneha is clearly interested in remote work and open to discussing other opportunities where her current skills align. However, she's cautious about the Python Developer role due to the explicit skill mismatch.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Meenakshi\",\n  \"candidate_email\": \"meenakshi@gmail.com\",\n  \"match_score\": 55,\n  \"match_explanation\": \"Meenakshi's experience matches the requirement, and location is flexible for a remote role. However, her core skills are Java-focused, missing Python, AWS, and Docker, and her work preference is for onsite.\",\n  \"outreach_message\": \"Hi Meenakshi, I came across your profile and thought of you for a Python Developer role. While our primary need is Python, your 4 years of experience and MySQL skills are impressive. We're keen to explore how your strong development background might align with our team's needs.\",\n  \"candidate_reply\": \"Thank you for reaching out, I appreciate you considering me for the Python Developer role. I'm primarily looking for onsite opportunities, but I'd be curious to learn more about this position and the team dynamics. Could you share further details about the remote work setup and what kind of Python experience is specifically required?\",\n  \"interest_score\": 65,\n  \"interest_level\": \"Interested but cautious\",\n  \"interest_explanation\": \"The candidate expresses a primary preference for onsite roles, indicating a mismatch with the remote position. However, they are curious to learn more and understand specific Python needs, showing willingness to explore.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Priya Singh\",\n  \"candidate_email\": \"priya@gmail.com\",\n  \"match_score\": 37,\n  \"match_explanation\": \"There's a significant skills mismatch (0/40) as the candidate lacks core Python developer skills. Experience (17/25) and work preference (0/15 for Remote vs Hybrid) also do not align fully.\",\n  \"outreach_message\": \"Hi Priya, your profile caught our eye! We're currently looking for a Python developer and were impressed by your background. We'd love to discuss your interest in Python development and how your skills could translate.\",\n  \"candidate_reply\": \"Hello! Thank you for reaching out, I appreciate you considering me. While my primary experience is in React/Node.js and I prefer hybrid roles, I'm definitely open to exploring new opportunities and learning new technologies like Python. Could you tell me more about the role and if there's any flexibility regarding the work setup?\",\n  \"interest_score\": 65,\n  \"interest_level\": \"Interested but cautious\",\n  \"interest_explanation\": \"Candidate is open to learning new technologies like Python and exploring the role further despite skill and work preference mismatches. They expressed curiosity about the role and potential flexibility.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Arjun Verma\",\n  \"candidate_email\": \"arjun@gmail.com\",\n  \"match_score\": 92,\n  \"match_explanation\": \"Arjun has an excellent skills match for the Python developer role and a direct alignment with remote work. Experience is slightly below requirement, contributing to a high overall score.\",\n  \"outreach_message\": \"Hi Arjun, I'm reaching out about an exciting Python Developer role that I think you'd be a great fit for. Your strong skills in Python, SQL, AWS, and Docker align perfectly with our needs, and we love your remote work preference. Let's chat more about this opportunity!\",\n  \"candidate_reply\": \"Hello! Thank you so much for reaching out about the Python Developer role. I'm definitely very interested to learn more, especially since it's a remote position. Please let me know the next steps!\",\n  \"interest_score\": 95,\n  \"interest_level\": \"Very enthusiastic\",\n  \"interest_explanation\": \"Arjun's reply clearly expresses strong interest in the Python Developer role, specifically highlighting the remote aspect. The immediate request for next steps indicates enthusiasm.\"\n}\n```"
+            },
+            {
+              "text": "```json\n{\n  \"candidate_name\": \"Meena Das\",\n  \"candidate_email\": \"meendas@gmail.com\",\n  \"match_score\": 45,\n  \"match_explanation\": \"The candidate has no direct skill overlap with the required Python, SQL, AWS, and Docker for this role. While experience matches, their hybrid work preference doesn't align with a fully remote position.\",\n  \"outreach_message\": \"Hi Meena, I came across your profile and our Python Developer role immediately came to mind. Your 3 years of development experience is a great match, and we're keen to connect with talented developers.\",\n  \"candidate_reply\": \"Thanks for reaching out! While Python isn't my primary skill set and I'm currently looking for hybrid roles, I'm always open to learning more about interesting opportunities. Could you share more details?\",\n  \"interest_score\": 65,\n  \"interest_level\": \"Interested but cautious\",\n  \"interest_explanation\": \"The candidate noted mismatches in skills and work preference but still expressed interest in learning more. This indicates cautious curiosity rather than outright rejection or strong enthusiasm.\"\n}\n```"
+            }
+          ]
+        },
+        "pairedItem": [
+          {
+            "item": 0
+          },
+          {
+            "item": 1
+          },
+          {
+            "item": 2
+          },
+          {
+            "item": 3
+          },
+          {
+            "item": 4
+          },
+          {
+            "item": 5
+          },
+          {
+            "item": 6
+          }
+        ]
+      }
+    ],
+    "Rank and combine.": [
+      {
+        "json": {
+          "rank": 1,
+          "candidate_name": "Arjun Verma",
+          "candidate_email": "arjun@gmail.com",
+          "match_score": 92,
+          "interest_score": 95,
+          "final_score": 93,
+          "interest_level": "Very enthusiastic",
+          "match_explanation": "Arjun has an excellent skills match for the Python developer role and a direct alignment with remote work. Experience is slightly below requirement, contributing to a high overall score.",
+          "interest_explanation": "Arjun's reply clearly expresses strong interest in the Python Developer role, specifically highlighting the remote aspect. The immediate request for next steps indicates enthusiasm.",
+          "outreach_message": "Hi Arjun, I'm reaching out about an exciting Python Developer role that I think you'd be a great fit for. Your strong skills in Python, SQL, AWS, and Docker align perfectly with our needs, and we love your remote work preference. Let's chat more about this opportunity!",
+          "candidate_reply": "Hello! Thank you so much for reaching out about the Python Developer role. I'm definitely very interested to learn more, especially since it's a remote position. Please let me know the next steps!"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 2,
+          "candidate_name": "Ravi Kumar",
+          "candidate_email": "ravi@gmail.com",
+          "match_score": 52,
+          "interest_score": 90,
+          "final_score": 67,
+          "interest_level": "Very enthusiastic",
+          "match_explanation": "The candidate lacks the specific Python, SQL, AWS, and Docker skills required for the role. However, their remote work preference aligns perfectly, and their experience is only slightly below the requirement.",
+          "interest_explanation": "The candidate explicitly states they are 'very interested' and 'keen to explore new opportunities'. They also proactively ask for the next steps, indicating strong interest.",
+          "outreach_message": "Hi Ravi, I'm reaching out about a Python Developer role we have that matches your remote work preference. Your development background is interesting, and we'd love to discuss if this could be a good fit. Would you be open to a brief chat to explore further?",
+          "candidate_reply": "Hi there, Thanks for reaching out about the Python Developer role! I'm very interested to hear more. My remote preference is a priority, and I'm keen to explore new opportunities. Please let me know the next steps!"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 3,
+          "candidate_name": "Meenakshi",
+          "candidate_email": "meenakshi@gmail.com",
+          "match_score": 55,
+          "interest_score": 65,
+          "final_score": 59,
+          "interest_level": "Interested but cautious",
+          "match_explanation": "Meenakshi's experience matches the requirement, and location is flexible for a remote role. However, her core skills are Java-focused, missing Python, AWS, and Docker, and her work preference is for onsite.",
+          "interest_explanation": "The candidate expresses a primary preference for onsite roles, indicating a mismatch with the remote position. However, they are curious to learn more and understand specific Python needs, showing willingness to explore.",
+          "outreach_message": "Hi Meenakshi, I came across your profile and thought of you for a Python Developer role. While our primary need is Python, your 4 years of experience and MySQL skills are impressive. We're keen to explore how your strong development background might align with our team's needs.",
+          "candidate_reply": "Thank you for reaching out, I appreciate you considering me for the Python Developer role. I'm primarily looking for onsite opportunities, but I'd be curious to learn more about this position and the team dynamics. Could you share further details about the remote work setup and what kind of Python experience is specifically required?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 4,
+          "candidate_name": "Anil Reddy",
+          "candidate_email": "anil@gmail.com",
+          "match_score": 45,
+          "interest_score": 65,
+          "final_score": 53,
+          "interest_level": "Medium",
+          "match_explanation": "Good match on experience (25/25) and core Python/Docker skills (20/40), but SQL/AWS are missing.\nWork preference for onsite clashes with the remote nature of the role (0/20 & 0/15), significantly impacting the overall fit.",
+          "interest_explanation": "The candidate shows initial interest and acknowledges the skill match but expresses caution due to the remote work type.\nThey are asking for more information before committing, indicating a medium level of interest.",
+          "outreach_message": "Hi Anil, your Python and Docker expertise, along with your 3 years of experience, align well with our Python Developer role.\nWe're keen to explore how your skills could contribute to our team.\nWould you be open to learning more about this exciting remote opportunity?",
+          "candidate_reply": "Thank you for reaching out! The Python Developer role sounds interesting, and I appreciate you seeing a fit with my skills and experience. However, I noticed it's a remote position. While I'm open to new opportunities, my current preference leans towards onsite roles. Could you tell me a bit more about the team culture and how remote collaboration works within your company, and perhaps what flexibility there might be?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 5,
+          "candidate_name": "Meena Das",
+          "candidate_email": "meendas@gmail.com",
+          "match_score": 45,
+          "interest_score": 65,
+          "final_score": 53,
+          "interest_level": "Interested but cautious",
+          "match_explanation": "The candidate has no direct skill overlap with the required Python, SQL, AWS, and Docker for this role. While experience matches, their hybrid work preference doesn't align with a fully remote position.",
+          "interest_explanation": "The candidate noted mismatches in skills and work preference but still expressed interest in learning more. This indicates cautious curiosity rather than outright rejection or strong enthusiasm.",
+          "outreach_message": "Hi Meena, I came across your profile and our Python Developer role immediately came to mind. Your 3 years of development experience is a great match, and we're keen to connect with talented developers.",
+          "candidate_reply": "Thanks for reaching out! While Python isn't my primary skill set and I'm currently looking for hybrid roles, I'm always open to learning more about interesting opportunities. Could you share more details?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 6,
+          "candidate_name": "Sneha Sharma",
+          "candidate_email": "kiran@gmail.com",
+          "match_score": 43,
+          "interest_score": 65,
+          "final_score": 52,
+          "interest_level": "Interested but cautious",
+          "match_explanation": "Sneha's profile shows a strong match for remote work preference. However, there's a significant mismatch in required technical skills and the minimum experience needed for the Python Developer role.",
+          "interest_explanation": "Sneha is clearly interested in remote work and open to discussing other opportunities where her current skills align. However, she's cautious about the Python Developer role due to the explicit skill mismatch.",
+          "outreach_message": "Hi Sneha Sharma, we're currently hiring for a Python Developer and noticed your profile. Your strong preference for remote work aligns perfectly with our position, and we're keen to connect with talented individuals in the tech space.",
+          "candidate_reply": "Hello, thank you for reaching out about the Python Developer role. I appreciate you considering my profile, especially as I'm seeking remote opportunities. However, my primary experience and skills are currently focused on React, MongoDB, and Express, rather than Python. Could you please clarify if there's flexibility on the required tech stack, or if there are other roles where my current skills might be a better fit?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "rank": 7,
+          "candidate_name": "Priya Singh",
+          "candidate_email": "priya@gmail.com",
+          "match_score": 37,
+          "interest_score": 65,
+          "final_score": 48,
+          "interest_level": "Interested but cautious",
+          "match_explanation": "There's a significant skills mismatch (0/40) as the candidate lacks core Python developer skills. Experience (17/25) and work preference (0/15 for Remote vs Hybrid) also do not align fully.",
+          "interest_explanation": "Candidate is open to learning new technologies like Python and exploring the role further despite skill and work preference mismatches. They expressed curiosity about the role and potential flexibility.",
+          "outreach_message": "Hi Priya, your profile caught our eye! We're currently looking for a Python developer and were impressed by your background. We'd love to discuss your interest in Python development and how your skills could translate.",
+          "candidate_reply": "Hello! Thank you for reaching out, I appreciate you considering me. While my primary experience is in React/Node.js and I prefer hybrid roles, I'm definitely open to exploring new opportunities and learning new technologies like Python. Could you tell me more about the role and if there's any flexibility regarding the work setup?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Candidates_application_details": [
+      {
+        "json": {
+          "row_number": 2,
+          "Name": "Ravi Kumar",
+          "Skills": "React, Node.js, MongoDB",
+          "Experience": 2,
+          "Location": "Hyderabad",
+          "Email": "ravi@gmail.com",
+          "Preferred Work": "Remote",
+          "Open To Relocate": "Yes"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 3,
+          "Name": "Anil Reddy",
+          "Skills": "Python, Django, REST API, Docker",
+          "Experience": 3,
+          "Location": "Hyderabad",
+          "Email": "anil@gmail.com",
+          "Preferred Work": "Onsite ",
+          "Open To Relocate": "Yes"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 4,
+          "Name": "Sneha Sharma",
+          "Skills": "React, MongoDB, Express",
+          "Experience": 1,
+          "Location": "Bangalore",
+          "Email": "kiran@gmail.com",
+          "Preferred Work": "Remote",
+          "Open To Relocate": "No"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 5,
+          "Name": "Meenakshi",
+          "Skills": "Java, Spring Boot, MySQL",
+          "Experience": 4,
+          "Location": "chennai",
+          "Email": "meenakshi@gmail.com",
+          "Preferred Work": "Onsite ",
+          "Open To Relocate": "Yes"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 6,
+          "Name": "Priya Singh",
+          "Skills": "React, Node.js, Firebase",
+          "Experience": 2,
+          "Location": "Punjab",
+          "Email": "priya@gmail.com",
+          "Preferred Work": "Hybrid",
+          "Open To Relocate": "Yes"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 7,
+          "Name": "Arjun Verma",
+          "Skills": "Angular, Node.js, MongoDB,Sql,AWS,Docker,Python",
+          "Experience": 2,
+          "Location": "Banglore",
+          "Email": "arjun@gmail.com",
+          "Preferred Work": "Remote",
+          "Open To Relocate": "Yes"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "row_number": 8,
+          "Name": "Meena Das",
+          "Skills": "React, Node.js, MongoDB",
+          "Experience": 3,
+          "Location": "Delhi",
+          "Email": "meendas@gmail.com",
+          "Preferred Work": "Hybrid",
+          "Open To Relocate": "No"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Shortlisted": [
+      {
+        "json": {
+          "Rank": 1,
+          "Candidate Name": "Arjun Verma",
+          "Email": "arjun@gmail.com",
+          "Match Score": 92,
+          "Interest Score": 95,
+          "Final Score": 93,
+          "Interest Level": "Very enthusiastic",
+          "Match Explanation": "Arjun has an excellent skills match for the Python developer role and a direct alignment with remote work. Experience is slightly below requirement, contributing to a high overall score.",
+          "Interest Explanation": "Arjun's reply clearly expresses strong interest in the Python Developer role, specifically highlighting the remote aspect. The immediate request for next steps indicates enthusiasm.",
+          "Outreach Message": "Hi Arjun, I'm reaching out about an exciting Python Developer role that I think you'd be a great fit for. Your strong skills in Python, SQL, AWS, and Docker align perfectly with our needs, and we love your remote work preference. Let's chat more about this opportunity!",
+          "Candidate Reply": "Hello! Thank you so much for reaching out about the Python Developer role. I'm definitely very interested to learn more, especially since it's a remote position. Please let me know the next steps!"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "Rank": 2,
+          "Candidate Name": "Ravi Kumar",
+          "Email": "ravi@gmail.com",
+          "Match Score": 52,
+          "Interest Score": 90,
+          "Final Score": 67,
+          "Interest Level": "Very enthusiastic",
+          "Match Explanation": "The candidate lacks the specific Python, SQL, AWS, and Docker skills required for the role. However, their remote work preference aligns perfectly, and their experience is only slightly below the requirement.",
+          "Interest Explanation": "The candidate explicitly states they are 'very interested' and 'keen to explore new opportunities'. They also proactively ask for the next steps, indicating strong interest.",
+          "Outreach Message": "Hi Ravi, I'm reaching out about a Python Developer role we have that matches your remote work preference. Your development background is interesting, and we'd love to discuss if this could be a good fit. Would you be open to a brief chat to explore further?",
+          "Candidate Reply": "Hi there, Thanks for reaching out about the Python Developer role! I'm very interested to hear more. My remote preference is a priority, and I'm keen to explore new opportunities. Please let me know the next steps!"
+        },
+        "pairedItem": {
+          "item": 1
+        }
+      },
+      {
+        "json": {
+          "Rank": 3,
+          "Candidate Name": "Meenakshi",
+          "Email": "meenakshi@gmail.com",
+          "Match Score": 55,
+          "Interest Score": 65,
+          "Final Score": 59,
+          "Interest Level": "Interested but cautious",
+          "Match Explanation": "Meenakshi's experience matches the requirement, and location is flexible for a remote role. However, her core skills are Java-focused, missing Python, AWS, and Docker, and her work preference is for onsite.",
+          "Interest Explanation": "The candidate expresses a primary preference for onsite roles, indicating a mismatch with the remote position. However, they are curious to learn more and understand specific Python needs, showing willingness to explore.",
+          "Outreach Message": "Hi Meenakshi, I came across your profile and thought of you for a Python Developer role. While our primary need is Python, your 4 years of experience and MySQL skills are impressive. We're keen to explore how your strong development background might align with our team's needs.",
+          "Candidate Reply": "Thank you for reaching out, I appreciate you considering me for the Python Developer role. I'm primarily looking for onsite opportunities, but I'd be curious to learn more about this position and the team dynamics. Could you share further details about the remote work setup and what kind of Python experience is specifically required?"
+        },
+        "pairedItem": {
+          "item": 2
+        }
+      },
+      {
+        "json": {
+          "Rank": 4,
+          "Candidate Name": "Anil Reddy",
+          "Email": "anil@gmail.com",
+          "Match Score": 45,
+          "Interest Score": 65,
+          "Final Score": 53,
+          "Interest Level": "Medium",
+          "Match Explanation": "Good match on experience (25/25) and core Python/Docker skills (20/40), but SQL/AWS are missing.\nWork preference for onsite clashes with the remote nature of the role (0/20 & 0/15), significantly impacting the overall fit.",
+          "Interest Explanation": "The candidate shows initial interest and acknowledges the skill match but expresses caution due to the remote work type.\nThey are asking for more information before committing, indicating a medium level of interest.",
+          "Outreach Message": "Hi Anil, your Python and Docker expertise, along with your 3 years of experience, align well with our Python Developer role.\nWe're keen to explore how your skills could contribute to our team.\nWould you be open to learning more about this exciting remote opportunity?",
+          "Candidate Reply": "Thank you for reaching out! The Python Developer role sounds interesting, and I appreciate you seeing a fit with my skills and experience. However, I noticed it's a remote position. While I'm open to new opportunities, my current preference leans towards onsite roles. Could you tell me a bit more about the team culture and how remote collaboration works within your company, and perhaps what flexibility there might be?"
+        },
+        "pairedItem": {
+          "item": 3
+        }
+      },
+      {
+        "json": {
+          "Rank": 5,
+          "Candidate Name": "Meena Das",
+          "Email": "meendas@gmail.com",
+          "Match Score": 45,
+          "Interest Score": 65,
+          "Final Score": 53,
+          "Interest Level": "Interested but cautious",
+          "Match Explanation": "The candidate has no direct skill overlap with the required Python, SQL, AWS, and Docker for this role. While experience matches, their hybrid work preference doesn't align with a fully remote position.",
+          "Interest Explanation": "The candidate noted mismatches in skills and work preference but still expressed interest in learning more. This indicates cautious curiosity rather than outright rejection or strong enthusiasm.",
+          "Outreach Message": "Hi Meena, I came across your profile and our Python Developer role immediately came to mind. Your 3 years of development experience is a great match, and we're keen to connect with talented developers.",
+          "Candidate Reply": "Thanks for reaching out! While Python isn't my primary skill set and I'm currently looking for hybrid roles, I'm always open to learning more about interesting opportunities. Could you share more details?"
+        },
+        "pairedItem": {
+          "item": 4
+        }
+      },
+      {
+        "json": {
+          "Rank": 6,
+          "Candidate Name": "Sneha Sharma",
+          "Email": "kiran@gmail.com",
+          "Match Score": 43,
+          "Interest Score": 65,
+          "Final Score": 52,
+          "Interest Level": "Interested but cautious",
+          "Match Explanation": "Sneha's profile shows a strong match for remote work preference. However, there's a significant mismatch in required technical skills and the minimum experience needed for the Python Developer role.",
+          "Interest Explanation": "Sneha is clearly interested in remote work and open to discussing other opportunities where her current skills align. However, she's cautious about the Python Developer role due to the explicit skill mismatch.",
+          "Outreach Message": "Hi Sneha Sharma, we're currently hiring for a Python Developer and noticed your profile. Your strong preference for remote work aligns perfectly with our position, and we're keen to connect with talented individuals in the tech space.",
+          "Candidate Reply": "Hello, thank you for reaching out about the Python Developer role. I appreciate you considering my profile, especially as I'm seeking remote opportunities. However, my primary experience and skills are currently focused on React, MongoDB, and Express, rather than Python. Could you please clarify if there's flexibility on the required tech stack, or if there are other roles where my current skills might be a better fit?"
+        },
+        "pairedItem": {
+          "item": 5
+        }
+      },
+      {
+        "json": {
+          "Rank": 7,
+          "Candidate Name": "Priya Singh",
+          "Email": "priya@gmail.com",
+          "Match Score": 37,
+          "Interest Score": 65,
+          "Final Score": 48,
+          "Interest Level": "Interested but cautious",
+          "Match Explanation": "There's a significant skills mismatch (0/40) as the candidate lacks core Python developer skills. Experience (17/25) and work preference (0/15 for Remote vs Hybrid) also do not align fully.",
+          "Interest Explanation": "Candidate is open to learning new technologies like Python and exploring the role further despite skill and work preference mismatches. They expressed curiosity about the role and potential flexibility.",
+          "Outreach Message": "Hi Priya, your profile caught our eye! We're currently looking for a Python developer and were impressed by your background. We'd love to discuss your interest in Python development and how your skills could translate.",
+          "Candidate Reply": "Hello! Thank you for reaching out, I appreciate you considering me. While my primary experience is in React/Node.js and I prefer hybrid roles, I'm definitely open to exploring new opportunities and learning new technologies like Python. Could you tell me more about the role and if there's any flexibility regarding the work setup?"
+        },
+        "pairedItem": {
+          "item": 6
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "JD Parser LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "JD Parser LLM Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Aggregate(To get every individual data in list formate).",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Talent Scout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JD Parser LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Candidates_application_details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate(To get every individual data in list formate).": {
+      "main": [
+        [
+          {
+            "node": "Rank and combine.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank and combine.": {
+      "main": [
+        [
+          {
+            "node": "Shortlisted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Talent Scout": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "JD Parser LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Talent Scout",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidates_application_details": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "189afcfb-bb64-4905-bbd7-0ff105d94912",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bcc7625112f1a9e68688305ab77ed86deaa89987b9b05ab0fa6b831381d44b92"
+  },
+  "id": "a6CZjpsua72yF5u7",
+  "tags": []
+}
