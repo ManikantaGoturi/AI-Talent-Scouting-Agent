@@ -7,6 +7,8 @@ services:
     envVars:
       - key: N8N_HOST
         value: 0.0.0.0
+      - key: PORT
+        value: 10000
       - key: N8N_PORT
         value: 10000
       - key: N8N_PROTOCOL
@@ -14,7 +16,7 @@ services:
       - key: WEBHOOK_URL
         value: https://ai-talent-scouting-agent.onrender.com
       - key: N8N_ENCRYPTION_KEY
-        generateValue: true
+        value: mySecretKey12345abcdef
       - key: N8N_BASIC_AUTH_ACTIVE
         value: true
       - key: N8N_BASIC_AUTH_USER
@@ -24,6 +26,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: N8N_DIAGNOSTICS_ENABLED
-        value: false
-      - key: N8N_VERSION_NOTIFICATIONS_ENABLED
         value: false
